@@ -32,6 +32,12 @@ You can run Seanime directly using the flake without integrating it into your Ni
 ```bash
 nix run github:rishabh5321/seanime-flake
 ```
+### Using the Flake Profiles
+
+You can install Seanime directly using the flake without integrating it into your NixOS configuration:
+```bash
+nix profile install github:rishabh5321/seanime-flake#seanime
+```
 
 ### Integrating with Home Manager 
 
