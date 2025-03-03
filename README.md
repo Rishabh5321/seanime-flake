@@ -145,5 +145,5 @@ This flake is licensed under the MIT License. Seanime itself is licensed under t
 ## Acknowledgments
 - [Seanime](https://github.com/5rahim/seanime) by 5rahim for the amazing media server.
 - [Th4tGuy69](https://github.com/Th4tGuy69) for their [NixOS configuration](https://github.com/Th4tGuy69/nixos-config) that inspired parts of this flake.
-- [70705](https://github.com/70705) for their [flake setup](https://github.com/70705/flake-example) that helped streamline this project.
+- [70705](https://github.com/70705) for their [flake setup](https://github.com/70705/nixconfig) that helped streamline this project.
 - The NixOS community for their support and resources.
