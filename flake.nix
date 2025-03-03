@@ -44,6 +44,7 @@
       config = lib.mkIf config.modules.home.services.seanime.enable {
         home.packages = [
           self.packages.x86_64-linux.seanime
+          pkgs.mpv # Add mpv here
         ];
 
         systemd.user.services.seanime = {
@@ -59,6 +60,7 @@
 
           Service = {
             ExecStart = "${self.packages.x86_64-linux.seanime}/bin/seanime";
+            Environment = "PATH=${pkgs.mpv}/bin:${pkgs.bash}/bin:${pkgs.coreutils}/bin"; # Add mpv to PATH
           };
         };
       };
