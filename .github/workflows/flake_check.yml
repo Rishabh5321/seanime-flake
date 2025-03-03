@@ -45,8 +45,8 @@ jobs:
           CHAT_ID: ${{ secrets.CHAT_ID }}
         run: |
           BRANCH_NAME="${{ github.ref_name }}"
-          FLAKE_CHECK_LOG="${{ steps.flake_check.outputs.flake_check_log }}"
-          FLAKE_INSTALL_LOG="${{ steps.flake_install.outputs.flake_install_log }}"
+          FLAKE_CHECK_LOG_ESCAPED=$(echo "$FLAKE_CHECK_LOG" | sed ':a;N;$!ba;s/\n/\\n/g')
+          FLAKE_INSTALL_LOG_ESCAPED=$(echo "$FLAKE_INSTALL_LOG" | sed ':a;N;$!ba;s/\n/\\n/g')
 
           if [[ "${{ job.status }}" == "success" ]]; then
             MESSAGE="✅ Flake check for Rishabh5321/seanime-flake completed successfully on branch $BRANCH_NAME."
@@ -55,8 +55,8 @@ jobs:
           fi
 
           # Truncate logs to fit Telegram's message limit (4096 characters)
-          FLAKE_CHECK_LOG_TRUNCATED=$(echo "$FLAKE_CHECK_LOG" | cut -c -2000)
-          FLAKE_INSTALL_LOG_TRUNCATED=$(echo "$FLAKE_INSTALL_LOG" | cut -c -2000)
+          FLAKE_CHECK_LOG_TRUNCATED=$(echo "$FLAKE_CHECK_LOG_ESCAPED" | cut -c -2000)
+          FLAKE_INSTALL_LOG_TRUNCATED=$(echo "$FLAKE_INSTALL_LOG_ESCAPED" | cut -c -2000)
 
           # Send the message with logs
           curl -s -X POST https://api.telegram.org/bot$TELEGRAM_TOKEN/sendMessage \
