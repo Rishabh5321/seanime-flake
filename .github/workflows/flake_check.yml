@@ -38,6 +38,13 @@ jobs:
           nix profile install . > "$LOG_FILE" 2>&1 || true
           echo "flake_install_log=$(cat "$LOG_FILE" | jq -sR)" >> $GITHUB_OUTPUT
 
+      - name: Debug Logs
+        run: |
+          echo "Flake Check Log:"
+          echo "$FLAKE_CHECK_LOG"
+          echo "Flake Install Log:"
+          echo "$FLAKE_INSTALL_LOG"
+
       - name: Send Telegram Notification
         if: always()
         env:
