@@ -6,33 +6,35 @@
   };
 
   outputs = { self, nixpkgs }: {
-    packages = let
-      system = "x86_64-linux";
-      pkgs = import nixpkgs { inherit system; };
-    in {
-      x86_64-linux.seanime = pkgs.stdenv.mkDerivation rec {
-        pname = "seanime";
-        version = "2.7.5";
+    packages =
+      let
+        system = "x86_64-linux";
+        pkgs = import nixpkgs { inherit system; };
+      in
+      {
+        x86_64-linux.seanime = pkgs.stdenv.mkDerivation rec {
+          pname = "seanime";
+          version = "2.7.5";
 
-        src = pkgs.fetchurl {
-          url = "https://github.com/5rahim/seanime/releases/download/v${version}/seanime-${version}_Linux_x86_64.tar.gz";
-          sha256 = "sha256-Vtm+SkrUTUkVQQR4nrpc5pJXMORrBFYH4lj2R1BAFkY=";
-        };
+          src = pkgs.fetchurl {
+            url = "https://github.com/5rahim/seanime/releases/download/v${version}/seanime-${version}_Linux_x86_64.tar.gz";
+            sha256 = "sha256-Vtm+SkrUTUkVQQR4nrpc5pJXMORrBFYH4lj2R1BAFkY=";
+          };
 
-        phases = [ "installPhase" ];
+          phases = [ "installPhase" ];
 
-        installPhase = ''
-          mkdir -p $out/bin
-          tar xzf $src -C $out/bin
-        '';
+          installPhase = ''
+            mkdir -p $out/bin
+            tar xzf $src -C $out/bin
+          '';
 
-        meta = {
-          description = "Open-source media server with a web interface and desktop app for anime and manga";
-          homepage = "https://github.com/5rahim/seanime";
-          license = pkgs.lib.licenses.gpl3Only;
+          meta = {
+            description = "Open-source media server with a web interface and desktop app for anime and manga";
+            homepage = "https://github.com/5rahim/seanime";
+            license = pkgs.lib.licenses.gpl3Only;
+          };
         };
       };
-    };
 
     defaultPackage.x86_64-linux = self.packages.x86_64-linux.seanime;
 
