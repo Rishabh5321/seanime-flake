@@ -27,7 +27,9 @@ jobs:
       - name: flake_check
         run: nix flake check
 
-        
+      - name: flake install
+        run: nix profile install .
+
       - name: Send Telegram Notification
         if: always()
         env:
