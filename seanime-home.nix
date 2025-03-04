@@ -1,0 +1,34 @@
+# ./seanime-home.nix
+{ config, lib, pkgs, ... }:
+
+let
+  cfg = config.modules.home.services.seanime;
+in {
+  options.modules.home.services.seanime = {
+    enable = lib.mkEnableOption "seanime";
+  };
+
+  config = lib.mkIf cfg.enable {
+    home.packages = [
+      pkgs.seanime
+      pkgs.mpv # Add mpv here
+    ];
+
+    systemd.user.services.seanime = {
+      Unit = {
+        Description = "Seanime WebServer";
+        After = "network.service";
+        X-SwitchMethod = "restart";
+      };
+
+      Install = {
+        WantedBy = [ "default.target" ];
+      };
+
+      Service = {
+        ExecStart = "${pkgs.seanime}/bin/seanime";
+        Environment = "PATH=${pkgs.mpv}/bin:${pkgs.bash}/bin:${pkgs.coreutils}/bin"; # Add mpv to PATH
+      };
+    };
+  };
+}
