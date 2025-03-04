@@ -2,6 +2,7 @@
 
 [![NixOS](https://img.shields.io/badge/NixOS-supported-blue.svg)](https://nixos.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![flake_check](https://github.com/Rishabh5321/seanime-flake/actions/workflows/flake_check.yml/badge.svg)](https://github.com/Rishabh5321/seanime-flake/actions/workflows/flake_check.yml)
 
 This repository provides a Nix flake for [Seanime](https://github.com/5rahim/seanime), an open-source media server with a web interface and desktop app for anime and manga. The flake includes the Seanime server and a NixOS module for easy integration into Home Manager configuration.
 
