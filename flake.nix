@@ -1,4 +1,3 @@
-# flake.nix
 {
   description = "Seanime - Open-source media server for anime and manga";
 
@@ -7,12 +6,12 @@
   };
 
   outputs = { self, nixpkgs }: {
-    packages.x86_64-linux.seanime =
-      import ./seanime-pkg.nix {
+    packages.x86_64-linux = {
+      seanime = import ./seanime-pkg.nix {
         pkgs = import nixpkgs { system = "x86_64-linux"; };
       };
-
-    defaultPackage.x86_64-linux = self.packages.x86_64-linux.seanime;
+      default = self.packages.x86_64-linux.seanime;
+    };
 
     nixosModules.seanime = { config, ... }: {
       imports = [
