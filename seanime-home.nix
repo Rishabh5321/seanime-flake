@@ -1,5 +1,5 @@
 # ./seanime-home.nix
-{ config, lib, pkgs, ... }:
+{ config, lib, pkgs, seanime, ... }:
 
 let
   cfg = config.modules.home.services.seanime;
@@ -10,7 +10,7 @@ in {
 
   config = lib.mkIf cfg.enable {
     home.packages = [
-      pkgs.seanime
+      seanime
       pkgs.mpv # Add mpv here
     ];
 
@@ -26,7 +26,7 @@ in {
       };
 
       Service = {
-        ExecStart = "${pkgs.seanime}/bin/seanime";
+        ExecStart = "${seanime}/bin/seanime";
         Environment = "PATH=${pkgs.mpv}/bin:${pkgs.bash}/bin:${pkgs.coreutils}/bin"; # Add mpv to PATH
       };
     };
