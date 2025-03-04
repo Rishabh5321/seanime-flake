@@ -3,7 +3,8 @@
 
 let
   cfg = config.modules.home.services.seanime;
-in {
+in
+{
   options.modules.home.services.seanime = {
     enable = lib.mkEnableOption "seanime";
   };
