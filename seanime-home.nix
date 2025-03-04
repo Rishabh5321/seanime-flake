@@ -27,6 +27,7 @@ in
       };
 
       Service = {
+        ExecStartPre = "${pkgs.coreutils}/bin/sleep 10"; # Add a 10-second delay
         ExecStart = "${seanime}/bin/seanime";
         Environment = "PATH=${pkgs.mpv}/bin:${pkgs.bash}/bin:${pkgs.coreutils}/bin"; # Add mpv to PATH
       };
