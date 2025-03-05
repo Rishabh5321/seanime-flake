@@ -112,7 +112,7 @@ environment.systemPackages = with pkgs; [
   mpv
 ];
 ```
-
+OR
 #### User-Specific Installation
 Add `mpv` to `home.packages` in your Home Manager configuration:
 ```nix
