@@ -39,6 +39,7 @@ You can install Seanime directly using the flake without integrating it into you
 ```bash
 nix profile install github:rishabh5321/seanime-flake#seanime
 ```
+Then to start the app use `seanime` or run seanime in terminal
 
 ### Integrating with Home Manager 
 
