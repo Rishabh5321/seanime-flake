@@ -18,7 +18,7 @@
         ({ ... }: {
           imports = [ ./seanime-home.nix ];
           config = {
-            _module.args.seanime = self.packages.x86_64-linux.seanime
+            _module.args.seanime = self.packages.x86_64-linux.seanime;
           };
         })
       ];
