@@ -32,9 +32,11 @@ jobs:
       - name: Run flake check and capture logs
         id: flake_check
         run: |
+          set +e  # Don't exit immediately on error
           nix flake check 2>&1 | tee flake_check.log
           if grep -E "(warning:|error:)" flake_check.log > flake_check_filtered.log; then
             echo "FLAKE_CHECK_STATUS=failed" >> $GITHUB_ENV
+            echo "WORKFLOW_SHOULD_FAIL=true" >> $GITHUB_ENV
           else
             echo "No warnings or errors." > flake_check_filtered.log
             echo "FLAKE_CHECK_STATUS=passed" >> $GITHUB_ENV
@@ -43,9 +45,11 @@ jobs:
       - name: Run flake install and capture logs
         id: flake_install
         run: |
+          set +e  # Don't exit immediately on error
           nix profile install . 2>&1 | tee flake_install.log
           if grep -E "(warning:|error:)" flake_install.log > flake_install_filtered.log; then
             echo "FLAKE_INSTALL_STATUS=failed" >> $GITHUB_ENV
+            echo "WORKFLOW_SHOULD_FAIL=true" >> $GITHUB_ENV
           else
             echo "No warnings or errors." > flake_install_filtered.log
             echo "FLAKE_INSTALL_STATUS=passed" >> $GITHUB_ENV
@@ -87,3 +91,8 @@ jobs:
             -d "chat_id=$CHAT_ID" \
             -d "text=$MESSAGE" \
             -d "parse_mode=HTML"
+
+      # This step will fail if any of the flake operations found errors
+      - name: Fail Workflow If Errors Detected
+        if: env.WORKFLOW_SHOULD_FAIL == 'true'
+        run: exit 1
