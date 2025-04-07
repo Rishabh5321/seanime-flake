@@ -28,7 +28,6 @@ jobs:
         with:
           name: rishabh5321
           authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
-          pushFilter: ".*"
       
       - name: Run flake check and capture logs
         id: flake_check
