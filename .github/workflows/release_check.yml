@@ -155,17 +155,6 @@ jobs:
           # Update the hash in the file
           sed -i -E "s|(hash\s*=\s*\")[^\"]+(\";)|\1sha256-${NEW_HASH}\2|" seanime-pkg.nix
 
-          # Verify that the hash was actually updated correctly in the file
-          if grep -q "hash = \"$NEW_HASH\";" seanime-pkg.nix; then
-            echo "Successfully updated hash in seanime-pkg.nix"
-          else
-            echo "::error::Failed to verify hash update in seanime-pkg.nix using sed."
-            echo "Expected hash line: hash = \"$NEW_HASH\";"
-            echo "File content after attempted update:"
-            cat seanime-pkg.nix
-            exit 1
-          fi
-
       - name: Commit and push changes
         # Only run if update is needed AND no existing PR was found
         if: env.UPDATE_NEEDED == 'true' && env.PR_EXISTS == 'false'
