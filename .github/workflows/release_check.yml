@@ -124,7 +124,7 @@ jobs:
           
           # Use nix-prefetch-url to download and get the SRI hash directly
           echo "Fetching file and calculating hash using nix-prefetch-url..."
-          NEW_HASH=$(nix-prefetch-url "$DOWNLOAD_URL" --type sha256 --print-hash)
+          NEW_HASH=$(nix-prefetch-url "$DOWNLOAD_URL" --type sha256)
           
           if [ -z "$NEW_HASH" ]; then
             echo "::error::Failed to calculate hash using nix-prefetch-url. Trying alternate method..."
