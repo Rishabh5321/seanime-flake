@@ -47,35 +47,47 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          CURRENT_VERSION=$(grep -oP 'version\s*=\s*"\K[^"]+' seanime-pkg.nix || echo "0.0.0")
-          echo "Current version found in seanime-pkg.nix: $CURRENT_VERSION"
-          echo "CURRENT_VERSION=$CURRENT_VERSION" >> $GITHUB_ENV
-      
+          # Get raw current version string from file
+          CURRENT_VERSION_RAW=$(grep -oP 'version\s*=\s*"\K[^"]+' seanime-pkg.nix || echo "0.0.0")
+          # Clean potential leading 'v' from current version for comparison/messaging
+          CURRENT_VERSION_CLEAN="${CURRENT_VERSION_RAW#v}"
+          echo "Current version found in seanime-pkg.nix (raw): $CURRENT_VERSION_RAW"
+          echo "Current version (cleaned): $CURRENT_VERSION_CLEAN"
+          echo "CURRENT_VERSION_CLEAN=$CURRENT_VERSION_CLEAN" >> $GITHUB_ENV # Store cleaned version
+
           echo "Fetching all releases from GitHub API..."
           RELEASES=$(gh api repos/5rahim/seanime/releases)
-      
+
           if [ -z "$RELEASES" ]; then
              echo "::error::Failed to fetch releases from GitHub API."
              exit 1
           fi
-      
-          # Filter to find the first non-prerelease and non-draft release
-          LATEST_VERSION=$(echo "$RELEASES" | jq -r '[.[] | select(.prerelease == false and .draft == false)][0].tag_name')
-      
-          if [ -z "$LATEST_VERSION" ] || [ "$LATEST_VERSION" == "null" ]; then
+
+          # Filter to find the first non-prerelease and non-draft release tag name
+          LATEST_TAG=$(echo "$RELEASES" | jq -r '[.[] | select(.prerelease == false and .draft == false)][0].tag_name')
+
+          if [ -z "$LATEST_TAG" ] || [ "$LATEST_TAG" == "null" ]; then
             echo "::error::Could not extract valid release tag from GitHub API response."
             echo "API Response: $RELEASES"
             exit 1
           fi
-      
-          echo "Latest version from GitHub API: $LATEST_VERSION"
-          echo "LATEST_VERSION=$LATEST_VERSION" >> $GITHUB_ENV
-      
-          if [ "$CURRENT_VERSION" = "$LATEST_VERSION" ]; then
-            echo "seanime is up-to-date ($CURRENT_VERSION)."
+
+          # --- NEW: Clean the latest tag name ---
+          # Remove leading 'v' using bash parameter expansion
+          LATEST_VERSION_CLEAN="${LATEST_TAG#v}"
+
+          echo "Latest tag from GitHub API: $LATEST_TAG"
+          echo "Latest version (cleaned): $LATEST_VERSION_CLEAN"
+          # Store both the original tag and the cleaned version
+          echo "LATEST_TAG=$LATEST_TAG" >> $GITHUB_ENV
+          echo "LATEST_VERSION_CLEAN=$LATEST_VERSION_CLEAN" >> $GITHUB_ENV
+
+          # Compare cleaned versions
+          if [ "$CURRENT_VERSION_CLEAN" = "$LATEST_VERSION_CLEAN" ]; then
+            echo "seanime is up-to-date ($CURRENT_VERSION_CLEAN)."
             echo "UPDATE_NEEDED=false" >> $GITHUB_ENV
           else
-            echo "Update needed: $CURRENT_VERSION -> $LATEST_VERSION"
+            echo "Update needed: $CURRENT_VERSION_CLEAN -> $LATEST_VERSION_CLEAN"
             echo "UPDATE_NEEDED=true" >> $GITHUB_ENV
           fi
 
@@ -84,10 +96,9 @@ jobs:
         # Only run if an update is potentially needed
         if: env.UPDATE_NEEDED == 'true'
         env:
-          # GITHUB_TOKEN needed for gh cli to interact with the repo
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Define branch name early using the determined LATEST_VERSION
-          BRANCH_NAME: "update-seanime-${{ env.LATEST_VERSION }}"
+          # Define branch name using the cleaned version
+          BRANCH_NAME: "update-seanime-${{ env.LATEST_VERSION_CLEAN }}"
         run: |
           echo "Checking for existing open PR for branch: $BRANCH_NAME"
           # Use gh pr list to find open PRs targeting the default branch from the head branch
@@ -107,20 +118,21 @@ jobs:
         # Only run if update is needed AND no existing PR was found
         if: env.UPDATE_NEEDED == 'true' && env.PR_EXISTS == 'false'
         env:
-           # Pass LATEST_VERSION to this step's environment
-           LATEST_VERSION: ${{ env.LATEST_VERSION }}
+           # Pass the original tag and the cleaned version
+           LATEST_TAG: ${{ env.LATEST_TAG }}
+           LATEST_VERSION_CLEAN: ${{ env.LATEST_VERSION_CLEAN }}
         run: |
-          echo "Updating seanime-pkg.nix to version $LATEST_VERSION"
+          # Use the cleaned version for messages and file update
+          echo "Updating seanime-pkg.nix to version $LATEST_VERSION_CLEAN"
 
-          # Update version string using GNU sed for portability and -E for extended regex
-          # Using @ as delimiter to avoid issues with version numbers
-          sed -i -E "s@(version\s*=\s*\")[^\"]+@\1${LATEST_VERSION}@" seanime-pkg.nix
-          echo "Version updated in seanime-pkg.nix"
+          # Update version string using the cleaned version
+          sed -i -E "s@(version\s*=\s*\")[^\"]+@\1${LATEST_VERSION_CLEAN}@" seanime-pkg.nix
+          echo "Version updated in seanime-pkg.nix using clean version."
 
-          # Run nix-prefetch-github and capture all output
-          echo "Running: nix-prefetch-github 5rahim seanime --rev $LATEST_VERSION"
+          # --- Use the ORIGINAL TAG for prefetching ---
+          echo "Running: nix-prefetch-github 5rahim seanime --rev $LATEST_TAG"
           # Prefetch without token by default, add --token if hitting rate limits and pass a secret
-          PREFETCH_OUTPUT=$(nix-prefetch-github 5rahim seanime --rev "$LATEST_VERSION" 2>&1)
+          PREFETCH_OUTPUT=$(nix-prefetch-github 5rahim seanime --rev "$LATEST_TAG" 2>&1)
           echo "Prefetch output:"
           echo "$PREFETCH_OUTPUT"
 
@@ -156,14 +168,9 @@ jobs:
           fi
 
           # --- Corrected SED command for HASH update ---
-          # Use capture groups to replace only the content *between* the quotes.
-          # Uses GNU sed with -E for extended regex. Delimiter is '|'.
-          # Pattern: \(hash = "\) captures group 1, [^"]* matches hash, \(";\) captures group 2
-          # Replacement: \1 (group 1), ${NEW_HASH} (new hash), \2 (group 2)
           sed -i -E "s|(hash\s*=\s*\")[^\"]+(\";)|\1${NEW_HASH}\2|" seanime-pkg.nix
 
           # --- Verification ---
-          # Verify that the hash was actually updated correctly in the file
           if grep -q "hash = \"$NEW_HASH\";" seanime-pkg.nix; then
             echo "Successfully updated hash in seanime-pkg.nix"
           else
@@ -178,9 +185,9 @@ jobs:
         # Only run if update is needed AND no existing PR was found
         if: env.UPDATE_NEEDED == 'true' && env.PR_EXISTS == 'false'
         env:
-           # Pass LATEST_VERSION and define branch name again for clarity
-           LATEST_VERSION: ${{ env.LATEST_VERSION }}
-           BRANCH_NAME: "update-seanime-${{ env.LATEST_VERSION }}"
+           # Pass CLEAN version and define branch name using CLEAN version
+           LATEST_VERSION_CLEAN: ${{ env.LATEST_VERSION_CLEAN }}
+           BRANCH_NAME: "update-seanime-${{ env.LATEST_VERSION_CLEAN }}"
         run: |
           echo "Configuring Git user..."
           git config --global user.name "github-actions[bot]"
@@ -200,7 +207,8 @@ jobs:
              echo "CHANGES_PUSHED=false" >> $GITHUB_ENV
           else
              echo "Committing changes..."
-             git commit -m "feat: Update seanime to ${LATEST_VERSION}" -m "Automatic update via GitHub Actions."
+             # Use CLEAN version in commit message
+             git commit -m "feat: Update seanime to ${LATEST_VERSION_CLEAN}" -m "Automatic update via GitHub Actions."
 
              echo "Pushing changes to origin/$BRANCH_NAME..."
              # Force push is generally acceptable here since we manage this branch
@@ -215,24 +223,26 @@ jobs:
         if: env.UPDATE_NEEDED == 'true' && env.PR_EXISTS == 'false' && env.CHANGES_PUSHED == 'true'
         uses: actions/github-script@v7
         env:
-          # Pass necessary versions and branch name to the script context
-          CURRENT_VERSION: ${{ env.CURRENT_VERSION }}
-          LATEST_VERSION: ${{ env.LATEST_VERSION }}
-          BRANCH_NAME: "update-seanime-${{ env.LATEST_VERSION }}"
+          # Pass necessary CLEAN versions and branch name to the script context
+          CURRENT_VERSION_CLEAN: ${{ env.CURRENT_VERSION_CLEAN }}
+          LATEST_VERSION_CLEAN: ${{ env.LATEST_VERSION_CLEAN }}
+          BRANCH_NAME: "update-seanime-${{ env.LATEST_VERSION_CLEAN }}"
         with:
           # Grant the script permission to create PRs
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const { CURRENT_VERSION, LATEST_VERSION, BRANCH_NAME } = process.env;
+            // Use the CLEANED versions passed from the environment
+            const { CURRENT_VERSION_CLEAN, LATEST_VERSION_CLEAN, BRANCH_NAME } = process.env;
             // Ensure variables are available
-            if (!LATEST_VERSION || !BRANCH_NAME || !CURRENT_VERSION) {
-              core.setFailed('Required environment variables (CURRENT_VERSION, LATEST_VERSION, BRANCH_NAME) were not set for PR creation.');
+            if (!LATEST_VERSION_CLEAN || !BRANCH_NAME || !CURRENT_VERSION_CLEAN) {
+              core.setFailed('Required environment variables (CURRENT_VERSION_CLEAN, LATEST_VERSION_CLEAN, BRANCH_NAME) were not set for PR creation.');
               return;
             }
 
             const baseBranch = 'main'; // <<< IMPORTANT: Change this if your default branch is not 'main' >>>
-            const title = `feat: Update seanime to ${LATEST_VERSION}`;
-            const body = `This PR automatically updates the \`seanime\` package from version \`${CURRENT_VERSION}\` to \`${LATEST_VERSION}\`.
+            // Use CLEAN version in title and body
+            const title = `feat: Update seanime to ${LATEST_VERSION_CLEAN}`;
+            const body = `This PR automatically updates the \`seanime\` package from version \`${CURRENT_VERSION_CLEAN}\` to \`${LATEST_VERSION_CLEAN}\`.
 
             Changes generated by GitHub Actions workflow.`;
             const owner = context.repo.owner;
@@ -250,7 +260,7 @@ jobs:
                 owner,
                 repo,
                 state: 'open',
-                head: `${owner}:${BRANCH_NAME}`,
+                head: `${owner}:${BRANCH_NAME}`, // Branch name derived from CLEAN version
                 base: baseBranch,
               });
 
@@ -263,7 +273,7 @@ jobs:
                   owner,
                   repo,
                   title,
-                  head: BRANCH_NAME,
+                  head: BRANCH_NAME, // Branch name derived from CLEAN version
                   base: baseBranch,
                   body: body,
                 });
