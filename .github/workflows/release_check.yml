@@ -31,7 +31,7 @@ jobs:
       - name: Install dependencies (using Nix)
         run: |
           # Install necessary tools using nix profile for better isolation
-          nix profile install nixpkgs#gh nixpkgs#jq nixpkgs#gnused nixpkgs#gnugrep nixpkgs#curl nixpkgs#nix-prefetch-url nixpkgs#gnused
+          nix profile install nixpkgs#gh nixpkgs#jq nixpkgs#gnused nixpkgs#gnugrep nixpkgs#curl nixpkgs#gnused
 
           # Add Nix binaries to PATH for subsequent steps
           echo "$HOME/.nix-profile/bin" >> $GITHUB_PATH
