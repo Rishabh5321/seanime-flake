@@ -47,8 +47,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          CURRENT_VERSION=$(grep -oP 'version\s*=\s*"\K[^"]+' package.nix || echo "0.0.0")
-          echo "Current version found in package.nix: $CURRENT_VERSION"
+          CURRENT_VERSION=$(grep -oP 'version\s*=\s*"\K[^"]+' seanime-pkg.nix || echo "0.0.0")
+          echo "Current version found in seanime-pkg.nix: $CURRENT_VERSION"
           echo "CURRENT_VERSION=$CURRENT_VERSION" >> $GITHUB_ENV
       
           echo "Fetching all releases from GitHub API..."
@@ -110,12 +110,12 @@ jobs:
            # Pass LATEST_VERSION to this step's environment
            LATEST_VERSION: ${{ env.LATEST_VERSION }}
         run: |
-          echo "Updating package.nix to version $LATEST_VERSION"
+          echo "Updating seanime-pkg.nix to version $LATEST_VERSION"
 
           # Update version string using GNU sed for portability and -E for extended regex
           # Using @ as delimiter to avoid issues with version numbers
-          sed -i -E "s@(version\s*=\s*\")[^\"]+@\1${LATEST_VERSION}@" package.nix
-          echo "Version updated in package.nix"
+          sed -i -E "s@(version\s*=\s*\")[^\"]+@\1${LATEST_VERSION}@" seanime-pkg.nix
+          echo "Version updated in seanime-pkg.nix"
 
           # Run nix-prefetch-github and capture all output
           echo "Running: nix-prefetch-github 5rahim seanime --rev $LATEST_VERSION"
@@ -160,17 +160,17 @@ jobs:
           # Uses GNU sed with -E for extended regex. Delimiter is '|'.
           # Pattern: \(hash = "\) captures group 1, [^"]* matches hash, \(";\) captures group 2
           # Replacement: \1 (group 1), ${NEW_HASH} (new hash), \2 (group 2)
-          sed -i -E "s|(hash\s*=\s*\")[^\"]+(\";)|\1${NEW_HASH}\2|" package.nix
+          sed -i -E "s|(hash\s*=\s*\")[^\"]+(\";)|\1${NEW_HASH}\2|" seanime-pkg.nix
 
           # --- Verification ---
           # Verify that the hash was actually updated correctly in the file
-          if grep -q "hash = \"$NEW_HASH\";" package.nix; then
-            echo "Successfully updated hash in package.nix"
+          if grep -q "hash = \"$NEW_HASH\";" seanime-pkg.nix; then
+            echo "Successfully updated hash in seanime-pkg.nix"
           else
-            echo "::error::Failed to verify hash update in package.nix using sed."
+            echo "::error::Failed to verify hash update in seanime-pkg.nix using sed."
             echo "Expected hash line: hash = \"$NEW_HASH\";"
             echo "File content after attempted update:"
-            cat package.nix
+            cat seanime-pkg.nix
             exit 1
           fi
 
@@ -191,11 +191,11 @@ jobs:
           git checkout -B "$BRANCH_NAME"
 
           echo "Adding changes..."
-          git add package.nix
+          git add seanime-pkg.nix
 
           # Check if there are actual changes staged for commit
           if git diff --staged --quiet; then
-             echo "No changes detected in package.nix after update. Skipping commit and push."
+             echo "No changes detected in seanime-pkg.nix after update. Skipping commit and push."
              # Set an output or env var if subsequent steps depend on changes being pushed
              echo "CHANGES_PUSHED=false" >> $GITHUB_ENV
           else
