@@ -1,0 +1,281 @@
+# .github/workflows/update-seanime.yml
+name: Update seanime version
+
+on:
+  schedule:
+    # Runs hourly (adjust as needed, e.g., '0 8 * * *' for daily at 8 AM UTC)
+    - cron: '0 * * * *'
+  workflow_dispatch: # Allows manual triggering
+
+jobs:
+  update-seanime:
+    runs-on: ubuntu-latest
+    # Prevent multiple runs for the same commit/event
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: true
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          # Fetch all history for accurate version comparison and branch operations
+          fetch-depth: 0
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          # Use nixpkgs-unstable channel for potentially newer tools
+          nix_path: nixpkgs=channel:nixos-unstable
+
+      - name: Install dependencies (using Nix)
+        run: |
+          # Install necessary tools using nix profile for better isolation
+          nix profile install nixpkgs#gh nixpkgs#nix-prefetch-github nixpkgs#jq nixpkgs#gnused nixpkgs#gnugrep
+
+          # Add Nix binaries to PATH for subsequent steps
+          echo "$HOME/.nix-profile/bin" >> $GITHUB_PATH
+          # Verify installation
+          gh --version
+          nix-prefetch-github --version
+          jq --version
+          sed --version || true # gnu sed might not have --version
+          grep --version || true # gnu grep might not have --version
+
+      - name: Get current and latest versions
+        id: versions
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          CURRENT_VERSION=$(grep -oP 'version\s*=\s*"\K[^"]+' package.nix || echo "0.0.0")
+          echo "Current version found in package.nix: $CURRENT_VERSION"
+          echo "CURRENT_VERSION=$CURRENT_VERSION" >> $GITHUB_ENV
+      
+          echo "Fetching all releases from GitHub API..."
+          RELEASES=$(gh api repos/5rahim/seanime/releases)
+      
+          if [ -z "$RELEASES" ]; then
+             echo "::error::Failed to fetch releases from GitHub API."
+             exit 1
+          fi
+      
+          # Filter to find the first non-prerelease and non-draft release
+          LATEST_VERSION=$(echo "$RELEASES" | jq -r '[.[] | select(.prerelease == false and .draft == false)][0].tag_name')
+      
+          if [ -z "$LATEST_VERSION" ] || [ "$LATEST_VERSION" == "null" ]; then
+            echo "::error::Could not extract valid release tag from GitHub API response."
+            echo "API Response: $RELEASES"
+            exit 1
+          fi
+      
+          echo "Latest version from GitHub API: $LATEST_VERSION"
+          echo "LATEST_VERSION=$LATEST_VERSION" >> $GITHUB_ENV
+      
+          if [ "$CURRENT_VERSION" = "$LATEST_VERSION" ]; then
+            echo "seanime is up-to-date ($CURRENT_VERSION)."
+            echo "UPDATE_NEEDED=false" >> $GITHUB_ENV
+          else
+            echo "Update needed: $CURRENT_VERSION -> $LATEST_VERSION"
+            echo "UPDATE_NEEDED=true" >> $GITHUB_ENV
+          fi
+
+      - name: Check for existing Pull Request
+        id: check_pr
+        # Only run if an update is potentially needed
+        if: env.UPDATE_NEEDED == 'true'
+        env:
+          # GITHUB_TOKEN needed for gh cli to interact with the repo
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Define branch name early using the determined LATEST_VERSION
+          BRANCH_NAME: "update-seanime-${{ env.LATEST_VERSION }}"
+        run: |
+          echo "Checking for existing open PR for branch: $BRANCH_NAME"
+          # Use gh pr list to find open PRs targeting the default branch from the head branch
+          # Ensure you replace 'main' if your default branch is different
+          EXISTING_PR_URL=$(gh pr list --head "$BRANCH_NAME" --base main --state open --json url --jq '.[0].url')
+
+          if [ -n "$EXISTING_PR_URL" ]; then
+            echo "::warning::An open pull request already exists for branch $BRANCH_NAME: $EXISTING_PR_URL"
+            echo "Skipping update and PR creation steps."
+            echo "PR_EXISTS=true" >> $GITHUB_ENV
+          else
+            echo "No existing open PR found for branch $BRANCH_NAME."
+            echo "PR_EXISTS=false" >> $GITHUB_ENV
+          fi
+
+      - name: Update version and hash
+        # Only run if update is needed AND no existing PR was found
+        if: env.UPDATE_NEEDED == 'true' && env.PR_EXISTS == 'false'
+        env:
+           # Pass LATEST_VERSION to this step's environment
+           LATEST_VERSION: ${{ env.LATEST_VERSION }}
+        run: |
+          echo "Updating package.nix to version $LATEST_VERSION"
+
+          # Update version string using GNU sed for portability and -E for extended regex
+          # Using @ as delimiter to avoid issues with version numbers
+          sed -i -E "s@(version\s*=\s*\")[^\"]+@\1${LATEST_VERSION}@" package.nix
+          echo "Version updated in package.nix"
+
+          # Run nix-prefetch-github and capture all output
+          echo "Running: nix-prefetch-github 5rahim seanime --rev $LATEST_VERSION"
+          # Prefetch without token by default, add --token if hitting rate limits and pass a secret
+          PREFETCH_OUTPUT=$(nix-prefetch-github 5rahim seanime --rev "$LATEST_VERSION" 2>&1)
+          echo "Prefetch output:"
+          echo "$PREFETCH_OUTPUT"
+
+          # Extract hash from output (prefer JSON)
+          NEW_HASH="" # Initialize NEW_HASH
+          # Use jq -e to check for validity and extract in one go if possible
+          if echo "$PREFETCH_OUTPUT" | jq -e .hash > /dev/null 2>&1; then
+             # Use jq -r to get the raw hash string without JSON quotes
+             NEW_HASH=$(echo "$PREFETCH_OUTPUT" | jq -r .hash)
+             echo "Extracted hash via jq: $NEW_HASH"
+          else
+             echo "::warning::nix-prefetch-github did not produce valid JSON output. Attempting legacy extraction."
+             # Attempt to extract legacy format (hash only) using grep with Perl regex
+             LEGACY_HASH=$(echo "$PREFETCH_OUTPUT" | grep -oP 'sha256-[a-zA-Z0-9/+]+=*')
+             if [ -n "$LEGACY_HASH" ]; then
+                # Take the first match if multiple lines somehow exist
+                NEW_HASH=$(echo "$LEGACY_HASH" | head -n 1)
+                echo "Extracted legacy hash via grep: $NEW_HASH"
+             else
+                echo "::error::Failed to extract hash from prefetch output (JSON and Legacy methods failed)."
+                echo "Output was: $PREFETCH_OUTPUT"
+                exit 1
+             fi
+          fi
+
+          # --- Improved Hash Validation ---
+          # Validate hash format more strictly (starts with sha256-, followed by Base64 chars and optional padding)
+          if [[ "$NEW_HASH" =~ ^sha256-[A-Za-z0-9+/]+={0,2}$ ]]; then
+              echo "Validated hash format: $NEW_HASH"
+          else
+              echo "::error::Extracted value '$NEW_HASH' does not look like a valid sha256 hash."
+              exit 1
+          fi
+
+          # --- Corrected SED command for HASH update ---
+          # Use capture groups to replace only the content *between* the quotes.
+          # Uses GNU sed with -E for extended regex. Delimiter is '|'.
+          # Pattern: \(hash = "\) captures group 1, [^"]* matches hash, \(";\) captures group 2
+          # Replacement: \1 (group 1), ${NEW_HASH} (new hash), \2 (group 2)
+          sed -i -E "s|(hash\s*=\s*\")[^\"]+(\";)|\1${NEW_HASH}\2|" package.nix
+
+          # --- Verification ---
+          # Verify that the hash was actually updated correctly in the file
+          if grep -q "hash = \"$NEW_HASH\";" package.nix; then
+            echo "Successfully updated hash in package.nix"
+          else
+            echo "::error::Failed to verify hash update in package.nix using sed."
+            echo "Expected hash line: hash = \"$NEW_HASH\";"
+            echo "File content after attempted update:"
+            cat package.nix
+            exit 1
+          fi
+
+      - name: Commit and push changes
+        # Only run if update is needed AND no existing PR was found
+        if: env.UPDATE_NEEDED == 'true' && env.PR_EXISTS == 'false'
+        env:
+           # Pass LATEST_VERSION and define branch name again for clarity
+           LATEST_VERSION: ${{ env.LATEST_VERSION }}
+           BRANCH_NAME: "update-seanime-${{ env.LATEST_VERSION }}"
+        run: |
+          echo "Configuring Git user..."
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+          echo "Checking out branch $BRANCH_NAME..."
+          # Create or switch to the update branch
+          git checkout -B "$BRANCH_NAME"
+
+          echo "Adding changes..."
+          git add package.nix
+
+          # Check if there are actual changes staged for commit
+          if git diff --staged --quiet; then
+             echo "No changes detected in package.nix after update. Skipping commit and push."
+             # Set an output or env var if subsequent steps depend on changes being pushed
+             echo "CHANGES_PUSHED=false" >> $GITHUB_ENV
+          else
+             echo "Committing changes..."
+             git commit -m "feat: Update seanime to ${LATEST_VERSION}" -m "Automatic update via GitHub Actions."
+
+             echo "Pushing changes to origin/$BRANCH_NAME..."
+             # Force push is generally acceptable here since we manage this branch
+             # and checked for existing PRs. It ensures the branch reflects this specific run.
+             git push -f origin "$BRANCH_NAME"
+             echo "Changes pushed successfully."
+             echo "CHANGES_PUSHED=true" >> $GITHUB_ENV
+          fi
+
+      - name: Create Pull Request
+        # Only run if update is needed, no existing PR was found, AND changes were pushed
+        if: env.UPDATE_NEEDED == 'true' && env.PR_EXISTS == 'false' && env.CHANGES_PUSHED == 'true'
+        uses: actions/github-script@v7
+        env:
+          # Pass necessary versions and branch name to the script context
+          CURRENT_VERSION: ${{ env.CURRENT_VERSION }}
+          LATEST_VERSION: ${{ env.LATEST_VERSION }}
+          BRANCH_NAME: "update-seanime-${{ env.LATEST_VERSION }}"
+        with:
+          # Grant the script permission to create PRs
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const { CURRENT_VERSION, LATEST_VERSION, BRANCH_NAME } = process.env;
+            // Ensure variables are available
+            if (!LATEST_VERSION || !BRANCH_NAME || !CURRENT_VERSION) {
+              core.setFailed('Required environment variables (CURRENT_VERSION, LATEST_VERSION, BRANCH_NAME) were not set for PR creation.');
+              return;
+            }
+
+            const baseBranch = 'main'; // <<< IMPORTANT: Change this if your default branch is not 'main' >>>
+            const title = `feat: Update seanime to ${LATEST_VERSION}`;
+            const body = `This PR automatically updates the \`seanime\` package from version \`${CURRENT_VERSION}\` to \`${LATEST_VERSION}\`.
+
+            Changes generated by GitHub Actions workflow.`;
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+
+            console.log(`Attempting to create Pull Request:`);
+            console.log(`  Title: ${title}`);
+            console.log(`  Head: ${owner}:${BRANCH_NAME}`);
+            console.log(`  Base: ${baseBranch}`);
+
+            try {
+              // The check_pr step should prevent this from running if a PR exists,
+              // but this check adds robustness.
+              const { data: existingPulls } = await github.rest.pulls.list({
+                owner,
+                repo,
+                state: 'open',
+                head: `${owner}:${BRANCH_NAME}`,
+                base: baseBranch,
+              });
+
+              if (existingPulls.length > 0) {
+                console.log(`::warning::Pull request from ${BRANCH_NAME} to ${baseBranch} already exists: ${existingPulls[0].html_url}`);
+                console.log('Skipping new PR creation.');
+              } else {
+                console.log('No existing open PR found. Creating a new one...');
+                const { data: pullRequest } = await github.rest.pulls.create({
+                  owner,
+                  repo,
+                  title,
+                  head: BRANCH_NAME,
+                  base: baseBranch,
+                  body: body,
+                });
+                console.log(`Pull request created successfully: ${pullRequest.html_url}`);
+                // Optionally add labels or assignees here
+                // await github.rest.issues.addLabels({ owner, repo, issue_number: pullRequest.number, labels: ['dependencies', 'automated'] });
+              }
+            } catch (error) {
+               // Check if error is because the branch wasn't pushed (e.g., no changes)
+               if (error.message.includes("No commit found for the ref") || error.message.includes("422")) {
+                  console.warn(`Could not create PR. This might be because the branch '${BRANCH_NAME}' wasn't pushed (no changes detected?) or another issue occurred. Error: ${error.message}`);
+               } else {
+                  core.setFailed(`Failed to create or check for pull request for branch ${BRANCH_NAME}: ${error.message}`);
+               }
+            }
