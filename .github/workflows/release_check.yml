@@ -111,7 +111,7 @@ jobs:
             echo "PR_EXISTS=false" >> $GITHUB_ENV
           fi
 
-      # --- MODIFIED STEP: Uses nix-prefetch-url --type sha256 ---
+      # --- MODIFIED STEP: Uses nix-prefetch-url --type sha256 and GREP for SRI hash ---
       - name: Update version and hash (using pre-built binary SRI hash)
         # Only run if update is needed AND no existing PR was found
         if: env.UPDATE_NEEDED == 'true' && env.PR_EXISTS == 'false'
@@ -133,7 +133,7 @@ jobs:
           BINARY_URL="https://github.com/5rahim/seanime/releases/download/${LATEST_TAG}/${ASSET_FILENAME}"
           echo "Target binary URL: $BINARY_URL"
 
-          # --- Use nix-prefetch-url with --type sha256 to get SRI hash ---
+          # Use nix-prefetch-url with --type sha256 to get SRI hash
           echo "Running: nix-prefetch-url --type sha256 $BINARY_URL"
           PREFETCH_OUTPUT=$(nix-prefetch-url --type sha256 "$BINARY_URL" 2>&1)
           EXIT_CODE=$?
@@ -144,24 +144,34 @@ jobs:
             exit 1
           fi
 
-          # Assume the SRI hash is the last line of successful output
-          NEW_HASH=$(echo "$PREFETCH_OUTPUT" | tail -n 1)
           echo "Prefetch output (raw):"
           echo "$PREFETCH_OUTPUT"
-          echo "Extracted SRI hash: $NEW_HASH"
+
+          # --- Extract SRI hash using grep ---
+          # Search the output specifically for the sha256-... pattern
+          NEW_HASH=$(echo "$PREFETCH_OUTPUT" | grep -oE 'sha256-[A-Za-z0-9+/]+=*')
+
+          if [ -z "$NEW_HASH" ]; then
+            echo "::error::Failed to extract SRI hash (sha256-...) using grep from prefetch output."
+            echo "Output was: $PREFETCH_OUTPUT"
+            exit 1
+          fi
+
+          # Take the first match if grep somehow finds multiple
+          NEW_HASH=$(echo "$NEW_HASH" | head -n 1)
+          echo "Extracted SRI hash via grep: $NEW_HASH"
 
           # --- Hash Validation (expecting SRI format) ---
+          # This validation is still important to ensure grep worked correctly
           if [[ "$NEW_HASH" =~ ^sha256-[A-Za-z0-9+/]+={0,2}$ ]]; then
               echo "Validated hash format (SRI): $NEW_HASH"
           else
-              echo "::error::Extracted value '$NEW_HASH' does not look like a valid SRI sha256 hash."
-              # Optionally print output again for debugging
-              # echo "Output was: $PREFETCH_OUTPUT"
+              # This case should ideally not happen if grep worked and found the pattern
+              echo "::error::Extracted value '$NEW_HASH' via grep does not look like a valid SRI sha256 hash."
               exit 1
           fi
 
           # --- Update hash in seanime-pkg.nix ---
-          # The sed command works correctly as it replaces the content between quotes
           echo "Updating hash in seanime-pkg.nix to $NEW_HASH"
           sed -i -E "s|(hash\s*=\s*\")[^\"]+(\";)|\1${NEW_HASH}\2|" seanime-pkg.nix
 
@@ -176,8 +186,6 @@ jobs:
             exit 1
           fi
 
-          # Reminder that seanime-pkg.nix must use fetchurl
-          echo "::warning::CRITICAL: Ensure seanime-pkg.nix uses 'fetchurl' for this hash to be effective!"
 
       - name: Commit and push changes
         # Only run if update is needed AND no existing PR was found
