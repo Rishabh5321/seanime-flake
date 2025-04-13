@@ -140,7 +140,7 @@ jobs:
             
             # Clean up temp file
             rm -f "$TEMP_FILE"
-          fi
+          
           
           echo "Calculated hash: $NEW_HASH"
 
