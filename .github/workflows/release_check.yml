@@ -122,23 +122,16 @@ jobs:
           DOWNLOAD_URL="https://github.com/5rahim/seanime/releases/download/v${LATEST_VERSION}/seanime-${LATEST_VERSION}_Linux_x86_64.tar.gz"
           echo "Download URL: $DOWNLOAD_URL"
           
-          # Use nix-prefetch-url to download and get the SRI hash directly
-          echo "Fetching file and calculating hash using nix-prefetch-url..."
-          NEW_HASH=$(nix-prefetch-url "$DOWNLOAD_URL" --type sha256)
-          
-          if [ -z "$NEW_HASH" ]; then
-            echo "::error::Failed to calculate hash using nix-prefetch-url. Trying alternate method..."
+          # Fallback method
+          TEMP_FILE=$(mktemp)
+          curl -sL "$DOWNLOAD_URL" -o "$TEMP_FILE"
             
-            # Fallback method
-            TEMP_FILE=$(mktemp)
-            curl -sL "$DOWNLOAD_URL" -o "$TEMP_FILE"
+          if [ ! -s "$TEMP_FILE" ]; then
+            echo "::error::Failed to download release file from $DOWNLOAD_URL"
+            exit 1
+          fi
             
-            if [ ! -s "$TEMP_FILE" ]; then
-              echo "::error::Failed to download release file from $DOWNLOAD_URL"
-              exit 1
-            fi
-            
-            NEW_HASH=$(nix hash file --type sha256 --sri "$TEMP_FILE" 2>/dev/null)
+          NEW_HASH=$(nix hash file --base64 "$TEMP_FILE" 2>/dev/null)
             
             if [ -z "$NEW_HASH" ]; then
               echo "::error::Failed to calculate hash for downloaded file."
