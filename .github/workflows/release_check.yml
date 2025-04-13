@@ -1,5 +1,5 @@
 # .github/workflows/update-seanime.yml
-name: Update seanime version (using pre-built binary Base32 hash)
+name: Update seanime version
 
 on:
   schedule:
@@ -31,62 +31,51 @@ jobs:
       - name: Install dependencies (using Nix)
         run: |
           # Install necessary tools using nix profile for better isolation
-          nix profile install nixpkgs#gh nixpkgs#jq nixpkgs#gnused nixpkgs#gnugrep
+          nix profile install nixpkgs#gh nixpkgs#jq nixpkgs#gnused nixpkgs#gnugrep nixpkgs#curl
 
           # Add Nix binaries to PATH for subsequent steps
           echo "$HOME/.nix-profile/bin" >> $GITHUB_PATH
           # Verify installation
           gh --version
-          nix-prefetch-url --version || true
           jq --version
-          sed --version || true
-          grep --version || true
+          sed --version || true # gnu sed might not have --version
+          grep --version || true # gnu grep might not have --version
+          curl --version
 
       - name: Get current and latest versions
         id: versions
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Get raw current version string from file
-          CURRENT_VERSION_RAW=$(grep -oP 'version\s*=\s*"\K[^"]+' seanime-pkg.nix || echo "0.0.0")
-          # Clean potential leading 'v' from current version for comparison/messaging
-          CURRENT_VERSION_CLEAN="${CURRENT_VERSION_RAW#v}"
-          echo "Current version found in seanime-pkg.nix (raw): $CURRENT_VERSION_RAW"
-          echo "Current version (cleaned): $CURRENT_VERSION_CLEAN"
-          echo "CURRENT_VERSION_CLEAN=$CURRENT_VERSION_CLEAN" >> $GITHUB_ENV # Store cleaned version
-
+          CURRENT_VERSION=$(grep -oP 'version\s*=\s*"\K[^"]+' seanime-pkg.nix || echo "0.0.0")
+          echo "Current version found in seanime-pkg.nix: $CURRENT_VERSION"
+          echo "CURRENT_VERSION=$CURRENT_VERSION" >> $GITHUB_ENV
+      
           echo "Fetching all releases from GitHub API..."
           RELEASES=$(gh api repos/5rahim/seanime/releases)
-
+      
           if [ -z "$RELEASES" ]; then
              echo "::error::Failed to fetch releases from GitHub API."
              exit 1
           fi
-
-          # Filter to find the first non-prerelease and non-draft release tag name
-          LATEST_TAG=$(echo "$RELEASES" | jq -r '[.[] | select(.prerelease == false and .draft == false)][0].tag_name')
-
-          if [ -z "$LATEST_TAG" ] || [ "$LATEST_TAG" == "null" ]; then
+      
+          # Filter to find the first non-prerelease and non-draft release
+          LATEST_VERSION=$(echo "$RELEASES" | jq -r '[.[] | select(.prerelease == false and .draft == false)][0].tag_name' | sed 's/^v//')
+      
+          if [ -z "$LATEST_VERSION" ] || [ "$LATEST_VERSION" == "null" ]; then
             echo "::error::Could not extract valid release tag from GitHub API response."
             echo "API Response: $RELEASES"
             exit 1
           fi
-
-          # Clean the latest tag name (remove leading 'v')
-          LATEST_VERSION_CLEAN="${LATEST_TAG#v}"
-
-          echo "Latest tag from GitHub API: $LATEST_TAG"
-          echo "Latest version (cleaned): $LATEST_VERSION_CLEAN"
-          # Store both the original tag and the cleaned version
-          echo "LATEST_TAG=$LATEST_TAG" >> $GITHUB_ENV
-          echo "LATEST_VERSION_CLEAN=$LATEST_VERSION_CLEAN" >> $GITHUB_ENV
-
-          # Compare cleaned versions
-          if [ "$CURRENT_VERSION_CLEAN" = "$LATEST_VERSION_CLEAN" ]; then
-            echo "seanime is up-to-date ($CURRENT_VERSION_CLEAN)."
+      
+          echo "Latest version from GitHub API: $LATEST_VERSION"
+          echo "LATEST_VERSION=$LATEST_VERSION" >> $GITHUB_ENV
+      
+          if [ "$CURRENT_VERSION" = "$LATEST_VERSION" ]; then
+            echo "seanime is up-to-date ($CURRENT_VERSION)."
             echo "UPDATE_NEEDED=false" >> $GITHUB_ENV
           else
-            echo "Update needed: $CURRENT_VERSION_CLEAN -> $LATEST_VERSION_CLEAN"
+            echo "Update needed: $CURRENT_VERSION -> $LATEST_VERSION"
             echo "UPDATE_NEEDED=true" >> $GITHUB_ENV
           fi
 
@@ -95,11 +84,14 @@ jobs:
         # Only run if an update is potentially needed
         if: env.UPDATE_NEEDED == 'true'
         env:
+          # GITHUB_TOKEN needed for gh cli to interact with the repo
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Define branch name using the cleaned version
-          BRANCH_NAME: "update-seanime-${{ env.LATEST_VERSION_CLEAN }}"
+          # Define branch name early using the determined LATEST_VERSION
+          BRANCH_NAME: "update-seanime-${{ env.LATEST_VERSION }}"
         run: |
           echo "Checking for existing open PR for branch: $BRANCH_NAME"
+          # Use gh pr list to find open PRs targeting the default branch from the head branch
+          # Ensure you replace 'main' if your default branch is different
           EXISTING_PR_URL=$(gh pr list --head "$BRANCH_NAME" --base main --state open --json url --jq '.[0].url')
 
           if [ -n "$EXISTING_PR_URL" ]; then
@@ -111,102 +103,102 @@ jobs:
             echo "PR_EXISTS=false" >> $GITHUB_ENV
           fi
 
-      # --- SIMPLEST WORKING STEP: Uses default nix-prefetch-url output (Base32 hash) ---
-      - name: Update version and hash (using Base32 hash)
+      - name: Update version and hash
         # Only run if update is needed AND no existing PR was found
         if: env.UPDATE_NEEDED == 'true' && env.PR_EXISTS == 'false'
         env:
-           # Pass the original tag and the cleaned version
-           LATEST_TAG: ${{ env.LATEST_TAG }}
-           LATEST_VERSION_CLEAN: ${{ env.LATEST_VERSION_CLEAN }}
-           # Define target architecture (ADJUST IF NEEDED)
-           TARGET_ARCH: "Linux_x86_64"
+           # Pass LATEST_VERSION to this step's environment
+           LATEST_VERSION: ${{ env.LATEST_VERSION }}
         run: |
-          echo "Updating seanime-pkg.nix to version $LATEST_VERSION_CLEAN (using Base32 hash)"
+          echo "Updating seanime-pkg.nix to version $LATEST_VERSION"
 
-          # Update version string using the cleaned version
-          sed -i -E "s@(version\s*=\s*\")[^\"]+@\1${LATEST_VERSION_CLEAN}@" seanime-pkg.nix
-          echo "Version updated in seanime-pkg.nix."
+          # Update version string using GNU sed for portability and -E for extended regex
+          # Using @ as delimiter to avoid issues with version numbers
+          sed -i -E "s@(version\s*=\s*\")[^\"]+@\1${LATEST_VERSION}@" seanime-pkg.nix
+          echo "Version updated in seanime-pkg.nix"
 
-          # Construct the URL for the pre-built binary
-          ASSET_FILENAME="seanime-${LATEST_VERSION_CLEAN}_${TARGET_ARCH}.tar.gz"
-          BINARY_URL="https://github.com/5rahim/seanime/releases/download/${LATEST_TAG}/${ASSET_FILENAME}"
-          echo "Target binary URL: $BINARY_URL"
-
-          # 1. Get the default Nix Base32 hash
-          echo "Running: nix-prefetch-url $BINARY_URL"
-          PREFETCH_OUTPUT=$(nix-prefetch-url "$BINARY_URL" 2>&1)
-          EXIT_CODE=$?
-
-          if [ $EXIT_CODE -ne 0 ]; then
-            echo "::error::nix-prefetch-url failed with exit code $EXIT_CODE"
-            echo "Output: $PREFETCH_OUTPUT"
+          # Construct the download URL with the new version
+          DOWNLOAD_URL="https://github.com/5rahim/seanime/releases/download/v${LATEST_VERSION}/seanime-${LATEST_VERSION}_Linux_x86_64.tar.gz"
+          echo "Download URL: $DOWNLOAD_URL"
+          
+          # Download the file to calculate the hash
+          echo "Downloading release to calculate hash..."
+          TEMP_FILE=$(mktemp)
+          curl -sL "$DOWNLOAD_URL" -o "$TEMP_FILE"
+          
+          if [ ! -s "$TEMP_FILE" ]; then
+            echo "::error::Failed to download release file from $DOWNLOAD_URL"
             exit 1
           fi
-          echo "Prefetch output (raw):"
-          echo "$PREFETCH_OUTPUT"
-
-          # 2. Extract the Base32 hash (assuming it's the last line)
-          NEW_HASH=$(echo "$PREFETCH_OUTPUT" | tail -n 1)
-          if [ -z "$NEW_HASH" ] || [[ "$NEW_HASH" == *"path is"* ]]; then
-             echo "::error::Failed to extract Base32 hash from prefetch output (last line)."
-             echo "Output was: $PREFETCH_OUTPUT"
-             exit 1
-          fi
-          echo "Extracted Base32 hash: $NEW_HASH"
-
-          # 3. Basic Validation (non-empty)
+          
+          # Calculate SHA256 hash using Nix's nix-hash command
+          NEW_HASH=$(nix-hash --type sha256 --base32 "$TEMP_FILE")
+          
           if [ -z "$NEW_HASH" ]; then
-              echo "::error::Extracted hash is empty."
+            echo "::error::Failed to calculate hash for downloaded file."
+            exit 1
+          fi
+          
+          # Add sha256- prefix for Nix SRI format
+          NEW_HASH="sha256-$(nix-hash --type sha256 --to-base64 "$TEMP_FILE")"
+          echo "Calculated hash: $NEW_HASH"
+          
+          # Clean up temp file
+          rm -f "$TEMP_FILE"
+
+          # Validate hash format
+          if [[ "$NEW_HASH" =~ ^sha256-[A-Za-z0-9+/]+={0,2}$ ]]; then
+              echo "Validated hash format: $NEW_HASH"
+          else
+              echo "::error::Calculated value '$NEW_HASH' does not look like a valid sha256 hash."
               exit 1
           fi
-          echo "Using Base32 hash: $NEW_HASH"
 
-          # 4. Update hash in seanime-pkg.nix with the Base32 hash
-          echo "Updating hash in seanime-pkg.nix to $NEW_HASH"
+          # Update the hash in the file
           sed -i -E "s|(hash\s*=\s*\")[^\"]+(\";)|\1${NEW_HASH}\2|" seanime-pkg.nix
 
-          # 5. Verification
-          if grep -qF "hash = \"$NEW_HASH\";" seanime-pkg.nix; then
-            echo "Successfully updated hash in seanime-pkg.nix with Base32 format"
+          # Verify that the hash was actually updated correctly in the file
+          if grep -q "hash = \"$NEW_HASH\";" seanime-pkg.nix; then
+            echo "Successfully updated hash in seanime-pkg.nix"
           else
-            echo "::error::Failed to verify Base32 hash update in seanime-pkg.nix using sed."
-            echo "Expected hash: $NEW_HASH"
+            echo "::error::Failed to verify hash update in seanime-pkg.nix using sed."
+            echo "Expected hash line: hash = \"$NEW_HASH\";"
             echo "File content after attempted update:"
             cat seanime-pkg.nix
             exit 1
           fi
 
-          # Reminder that seanime-pkg.nix must use fetchurl
-          echo "::warning::CRITICAL: Ensure seanime-pkg.nix uses 'fetchurl' for this hash to be effective!"
-
       - name: Commit and push changes
         # Only run if update is needed AND no existing PR was found
         if: env.UPDATE_NEEDED == 'true' && env.PR_EXISTS == 'false'
         env:
-           # Pass CLEAN version and define branch name using CLEAN version
-           LATEST_VERSION_CLEAN: ${{ env.LATEST_VERSION_CLEAN }}
-           BRANCH_NAME: "update-seanime-${{ env.LATEST_VERSION_CLEAN }}"
+           # Pass LATEST_VERSION and define branch name again for clarity
+           LATEST_VERSION: ${{ env.LATEST_VERSION }}
+           BRANCH_NAME: "update-seanime-${{ env.LATEST_VERSION }}"
         run: |
           echo "Configuring Git user..."
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
           echo "Checking out branch $BRANCH_NAME..."
+          # Create or switch to the update branch
           git checkout -B "$BRANCH_NAME"
 
           echo "Adding changes..."
           git add seanime-pkg.nix
 
+          # Check if there are actual changes staged for commit
           if git diff --staged --quiet; then
              echo "No changes detected in seanime-pkg.nix after update. Skipping commit and push."
+             # Set an output or env var if subsequent steps depend on changes being pushed
              echo "CHANGES_PUSHED=false" >> $GITHUB_ENV
           else
              echo "Committing changes..."
-             # Use CLEAN version in commit message
-             git commit -m "feat: Update seanime to ${LATEST_VERSION_CLEAN} (pre-built Base32)" -m "Automatic update via GitHub Actions using pre-built binary Base32 hash."
+             git commit -m "feat: Update seanime to ${LATEST_VERSION}" -m "Automatic update via GitHub Actions."
 
              echo "Pushing changes to origin/$BRANCH_NAME..."
+             # Force push is generally acceptable here since we manage this branch
+             # and checked for existing PRs. It ensures the branch reflects this specific run.
              git push -f origin "$BRANCH_NAME"
              echo "Changes pushed successfully."
              echo "CHANGES_PUSHED=true" >> $GITHUB_ENV
@@ -217,27 +209,24 @@ jobs:
         if: env.UPDATE_NEEDED == 'true' && env.PR_EXISTS == 'false' && env.CHANGES_PUSHED == 'true'
         uses: actions/github-script@v7
         env:
-          # Pass necessary CLEAN versions and branch name to the script context
-          CURRENT_VERSION_CLEAN: ${{ env.CURRENT_VERSION_CLEAN }}
-          LATEST_VERSION_CLEAN: ${{ env.LATEST_VERSION_CLEAN }}
-          BRANCH_NAME: "update-seanime-${{ env.LATEST_VERSION_CLEAN }}"
+          # Pass necessary versions and branch name to the script context
+          CURRENT_VERSION: ${{ env.CURRENT_VERSION }}
+          LATEST_VERSION: ${{ env.LATEST_VERSION }}
+          BRANCH_NAME: "update-seanime-${{ env.LATEST_VERSION }}"
         with:
           # Grant the script permission to create PRs
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            // Use the CLEANED versions passed from the environment
-            const { CURRENT_VERSION_CLEAN, LATEST_VERSION_CLEAN, BRANCH_NAME } = process.env;
-            if (!LATEST_VERSION_CLEAN || !BRANCH_NAME || !CURRENT_VERSION_CLEAN) {
-              core.setFailed('Required environment variables (CURRENT_VERSION_CLEAN, LATEST_VERSION_CLEAN, BRANCH_NAME) were not set for PR creation.');
+            const { CURRENT_VERSION, LATEST_VERSION, BRANCH_NAME } = process.env;
+            // Ensure variables are available
+            if (!LATEST_VERSION || !BRANCH_NAME || !CURRENT_VERSION) {
+              core.setFailed('Required environment variables (CURRENT_VERSION, LATEST_VERSION, BRANCH_NAME) were not set for PR creation.');
               return;
             }
 
             const baseBranch = 'main'; // <<< IMPORTANT: Change this if your default branch is not 'main' >>>
-            // Use CLEAN version in title and body
-            const title = `feat: Update seanime to ${LATEST_VERSION_CLEAN} (pre-built Base32)`;
-            const body = `This PR automatically updates the \`seanime\` package from version \`${CURRENT_VERSION_CLEAN}\` to \`${LATEST_VERSION_CLEAN}\` using the Base32 hash of the pre-built binary.
-
-            **IMPORTANT:** This requires the \`seanime-pkg.nix\` file to use \`Workspaceurl\` instead of \`WorkspaceFromGitHub\`. Please ensure this change is made manually if it hasn't been already.
+            const title = `feat: Update seanime to ${LATEST_VERSION}`;
+            const body = `This PR automatically updates the \`seanime\` package from version \`${CURRENT_VERSION}\` to \`${LATEST_VERSION}\`.
 
             Changes generated by GitHub Actions workflow.`;
             const owner = context.repo.owner;
@@ -249,6 +238,8 @@ jobs:
             console.log(`  Base: ${baseBranch}`);
 
             try {
+              // The check_pr step should prevent this from running if a PR exists,
+              // but this check adds robustness.
               const { data: existingPulls } = await github.rest.pulls.list({
                 owner,
                 repo,
@@ -271,8 +262,11 @@ jobs:
                   body: body,
                 });
                 console.log(`Pull request created successfully: ${pullRequest.html_url}`);
+                // Optionally add labels or assignees here
+                // await github.rest.issues.addLabels({ owner, repo, issue_number: pullRequest.number, labels: ['dependencies', 'automated'] });
               }
             } catch (error) {
+               // Check if error is because the branch wasn't pushed (e.g., no changes)
                if (error.message.includes("No commit found for the ref") || error.message.includes("422")) {
                   console.warn(`Could not create PR. This might be because the branch '${BRANCH_NAME}' wasn't pushed (no changes detected?) or another issue occurred. Error: ${error.message}`);
                } else {
