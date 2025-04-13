@@ -1,5 +1,5 @@
 # .github/workflows/update-seanime.yml
-name: Update seanime version (using pre-built binary SRI hash)
+name: Update seanime version (using pre-built binary Base32 hash)
 
 on:
   schedule:
@@ -31,8 +31,7 @@ jobs:
       - name: Install dependencies (using Nix)
         run: |
           # Install necessary tools using nix profile for better isolation
-          # Ensure 'nix' command itself is available for hash conversion
-          nix profile install nixpkgs#gh nixpkgs#jq nixpkgs#gnused nixpkgs#gnugrep nixpkgs#nix
+          nix profile install nixpkgs#gh nixpkgs#jq nixpkgs#gnused nixpkgs#gnugrep
 
           # Add Nix binaries to PATH for subsequent steps
           echo "$HOME/.nix-profile/bin" >> $GITHUB_PATH
@@ -42,7 +41,6 @@ jobs:
           jq --version
           sed --version || true
           grep --version || true
-          nix --version
 
       - name: Get current and latest versions
         id: versions
@@ -113,8 +111,8 @@ jobs:
             echo "PR_EXISTS=false" >> $GITHUB_ENV
           fi
 
-      # --- CORRECTED STEP: Uses nix hash to-sri for valid SRI hash ---
-      - name: Update version and hash (using converted SRI hash)
+      # --- SIMPLEST WORKING STEP: Uses default nix-prefetch-url output (Base32 hash) ---
+      - name: Update version and hash (using Base32 hash)
         # Only run if update is needed AND no existing PR was found
         if: env.UPDATE_NEEDED == 'true' && env.PR_EXISTS == 'false'
         env:
@@ -124,7 +122,7 @@ jobs:
            # Define target architecture (ADJUST IF NEEDED)
            TARGET_ARCH: "Linux_x86_64"
         run: |
-          echo "Updating seanime-pkg.nix to version $LATEST_VERSION_CLEAN (using converted SRI hash)"
+          echo "Updating seanime-pkg.nix to version $LATEST_VERSION_CLEAN (using Base32 hash)"
 
           # Update version string using the cleaned version
           sed -i -E "s@(version\s*=\s*\")[^\"]+@\1${LATEST_VERSION_CLEAN}@" seanime-pkg.nix
@@ -148,44 +146,31 @@ jobs:
           echo "Prefetch output (raw):"
           echo "$PREFETCH_OUTPUT"
 
-          # Extract the Base32 hash (assuming it's the last line)
-          BASE32_HASH=$(echo "$PREFETCH_OUTPUT" | tail -n 1)
-          if [ -z "$BASE32_HASH" ] || [[ "$BASE32_HASH" == *"path is"* ]]; then
-             echo "::error::Failed to extract Base32 hash from prefetch output."
+          # 2. Extract the Base32 hash (assuming it's the last line)
+          NEW_HASH=$(echo "$PREFETCH_OUTPUT" | tail -n 1)
+          if [ -z "$NEW_HASH" ] || [[ "$NEW_HASH" == *"path is"* ]]; then
+             echo "::error::Failed to extract Base32 hash from prefetch output (last line)."
              echo "Output was: $PREFETCH_OUTPUT"
              exit 1
           fi
-          echo "Extracted Base32 hash: $BASE32_HASH"
+          echo "Extracted Base32 hash: $NEW_HASH"
 
-          # 2. Convert Base32 hash to SRI format using nix hash to-sri
-          echo "Running: nix hash to-sri --type sha256 $BASE32_HASH"
-          NEW_HASH=$(nix hash to-sri --type sha256 "$BASE32_HASH" 2>&1)
-          CONVERT_EXIT_CODE=$?
-
-          if [ $CONVERT_EXIT_CODE -ne 0 ]; then
-              echo "::error::'nix hash to-sri' failed with exit code $CONVERT_EXIT_CODE"
-              echo "Output: $NEW_HASH" # Output might contain error message
+          # 3. Basic Validation (non-empty)
+          if [ -z "$NEW_HASH" ]; then
+              echo "::error::Extracted hash is empty."
               exit 1
           fi
-          echo "Converted SRI hash: $NEW_HASH"
+          echo "Using Base32 hash: $NEW_HASH"
 
-          # 3. Validate the converted SRI hash format
-          if [[ "$NEW_HASH" =~ ^sha256-[A-Za-z0-9+/]+={0,2}$ ]]; then
-              echo "Validated hash format (SRI): $NEW_HASH"
-          else
-              echo "::error::Converted value '$NEW_HASH' does not look like a valid SRI sha256 hash."
-              exit 1
-          fi
-
-          # 4. Update hash in seanime-pkg.nix with the *valid* SRI hash
+          # 4. Update hash in seanime-pkg.nix with the Base32 hash
           echo "Updating hash in seanime-pkg.nix to $NEW_HASH"
           sed -i -E "s|(hash\s*=\s*\")[^\"]+(\";)|\1${NEW_HASH}\2|" seanime-pkg.nix
 
           # 5. Verification
           if grep -qF "hash = \"$NEW_HASH\";" seanime-pkg.nix; then
-            echo "Successfully updated hash in seanime-pkg.nix with valid SRI format"
+            echo "Successfully updated hash in seanime-pkg.nix with Base32 format"
           else
-            echo "::error::Failed to verify SRI hash update in seanime-pkg.nix using sed."
+            echo "::error::Failed to verify Base32 hash update in seanime-pkg.nix using sed."
             echo "Expected hash: $NEW_HASH"
             echo "File content after attempted update:"
             cat seanime-pkg.nix
@@ -219,7 +204,7 @@ jobs:
           else
              echo "Committing changes..."
              # Use CLEAN version in commit message
-             git commit -m "feat: Update seanime to ${LATEST_VERSION_CLEAN} (pre-built SRI)" -m "Automatic update via GitHub Actions using pre-built binary SRI hash (converted from Base32)."
+             git commit -m "feat: Update seanime to ${LATEST_VERSION_CLEAN} (pre-built Base32)" -m "Automatic update via GitHub Actions using pre-built binary Base32 hash."
 
              echo "Pushing changes to origin/$BRANCH_NAME..."
              git push -f origin "$BRANCH_NAME"
@@ -249,8 +234,8 @@ jobs:
 
             const baseBranch = 'main'; // <<< IMPORTANT: Change this if your default branch is not 'main' >>>
             // Use CLEAN version in title and body
-            const title = `feat: Update seanime to ${LATEST_VERSION_CLEAN} (pre-built SRI)`;
-            const body = `This PR automatically updates the \`seanime\` package from version \`${CURRENT_VERSION_CLEAN}\` to \`${LATEST_VERSION_CLEAN}\` using the SRI hash (\`sha256-...\`) of the pre-built binary (converted from Base32).
+            const title = `feat: Update seanime to ${LATEST_VERSION_CLEAN} (pre-built Base32)`;
+            const body = `This PR automatically updates the \`seanime\` package from version \`${CURRENT_VERSION_CLEAN}\` to \`${LATEST_VERSION_CLEAN}\` using the Base32 hash of the pre-built binary.
 
             **IMPORTANT:** This requires the \`seanime-pkg.nix\` file to use \`Workspaceurl\` instead of \`WorkspaceFromGitHub\`. Please ensure this change is made manually if it hasn't been already.
 
