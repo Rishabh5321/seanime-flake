@@ -31,7 +31,7 @@ jobs:
       - name: Install dependencies (using Nix)
         run: |
           # Install necessary tools using nix profile for better isolation
-          nix profile install nixpkgs#gh nixpkgs#jq nixpkgs#gnused nixpkgs#gnugrep nixpkgs#curl nixpkgs#gnused
+          nix profile install nixpkgs#gh nixpkgs#jq nixpkgs#gnused nixpkgs#gnugrep nixpkgs#curl
 
           # Add Nix binaries to PATH for subsequent steps
           echo "$HOME/.nix-profile/bin" >> $GITHUB_PATH
@@ -122,57 +122,38 @@ jobs:
           DOWNLOAD_URL="https://github.com/5rahim/seanime/releases/download/v${LATEST_VERSION}/seanime-${LATEST_VERSION}_Linux_x86_64.tar.gz"
           echo "Download URL: $DOWNLOAD_URL"
           
-          # Use nix-prefetch-url to download and get the hash directly
+          # Use nix-prefetch-url to download and get the SRI hash directly
           echo "Fetching file and calculating hash using nix-prefetch-url..."
-          # First, get the raw hash without modifications
-          RAW_HASH=$(nix-prefetch-url "$DOWNLOAD_URL" --type sha256)
+          NEW_HASH=$(nix-prefetch-url "$DOWNLOAD_URL" --type sha256)
           
-          if [ -z "$RAW_HASH" ]; then
-            echo "::error::Failed to calculate hash using nix-prefetch-url."
-            exit 1
-          fi
-          
-          echo "Raw hash from nix-prefetch-url: $RAW_HASH"
-          
-          # Check if hash already has sha256- prefix
-          if [[ "$RAW_HASH" == sha256-* ]]; then
-            NEW_HASH="$RAW_HASH"
-            echo "Hash already has sha256- prefix, using as is."
-          else
-            # Convert the hash to SRI format (sha256-base64) if needed
-            # First check if it's already in base32 format (Nix's default)
-            if [[ "$RAW_HASH" =~ ^[0-9a-z]{52}$ ]]; then
-              # It's a base32 hash, convert to SRI format
-              echo "Converting base32 hash to SRI format..."
-              
-              # Use nix-hash to convert if available
-              if command -v nix hash to-sri &> /dev/null; then
-                # Modern Nix command
-                NEW_HASH=$(nix hash to-sri --type sha256 "sha256:$RAW_HASH")
-              else
-                # Old-style: create a temporary file with the hash
-                TEMP_FILE=$(mktemp)
-                echo -n "$RAW_HASH" > "$TEMP_FILE"
-                # Verify base64 availability
-                if command -v base64 &> /dev/null; then
-                  # Use `nix hash file` to calculate the SRI hash from the original URL
-                  NEW_HASH="sha256-$(nix hash file --type sha256 --base64 "$TEMP_FILE")"
-                else
-                  # If conversion is not possible, use as-is with prefix
-                  NEW_HASH="sha256-$RAW_HASH"
-                fi
-                rm -f "$TEMP_FILE"
-              fi
-            else
-              # Just add the prefix as fallback
-              NEW_HASH="sha256-$RAW_HASH"
+          if [ -z "$NEW_HASH" ]; then
+            echo "::error::Failed to calculate hash using nix-prefetch-url. Trying alternate method..."
+            
+            # Fallback method
+            TEMP_FILE=$(mktemp)
+            curl -sL "$DOWNLOAD_URL" -o "$TEMP_FILE"
+            
+            if [ ! -s "$TEMP_FILE" ]; then
+              echo "::error::Failed to download release file from $DOWNLOAD_URL"
+              exit 1
             fi
+            
+            NEW_HASH=$(nix hash file --type sha256 --sri "$TEMP_FILE" 2>/dev/null)
+            
+            if [ -z "$NEW_HASH" ]; then
+              echo "::error::Failed to calculate hash for downloaded file."
+              exit 1
+            fi
+            
+            # Clean up temp file
+            rm -f "$TEMP_FILE"
           fi
           
-          echo "Final hash for package: $NEW_HASH"
+          echo "Calculated hash: $NEW_HASH"
+
 
           # Update the hash in the file
-          sed -i -E "s|(hash\s*=\s*\")[^\"]+(\";)|\1${NEW_HASH}\2|" seanime-pkg.nix
+          sed -i -E "s|(hash\s*=\s*\")[^\"]+(\";)|\1sha256-${NEW_HASH}\2|" seanime-pkg.nix
 
           # Verify that the hash was actually updated correctly in the file
           if grep -q "hash = \"$NEW_HASH\";" seanime-pkg.nix; then
