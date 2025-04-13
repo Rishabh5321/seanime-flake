@@ -1,5 +1,5 @@
 # .github/workflows/update-seanime.yml
-name: Update seanime version (using pre-built binary)
+name: Update seanime version (using pre-built binary SRI hash)
 
 on:
   schedule:
@@ -31,24 +31,25 @@ jobs:
       - name: Install dependencies (using Nix)
         run: |
           # Install necessary tools using nix profile for better isolation
-          # Added nix-prefetch-url tool
           nix profile install nixpkgs#gh nixpkgs#jq nixpkgs#gnused nixpkgs#gnugrep
 
           # Add Nix binaries to PATH for subsequent steps
           echo "$HOME/.nix-profile/bin" >> $GITHUB_PATH
           # Verify installation
           gh --version
-          nix-prefetch-url --version || true 
+          nix-prefetch-url --version || true
           jq --version
-          sed --version || true 
-          grep --version || true 
+          sed --version || true
+          grep --version || true
 
       - name: Get current and latest versions
         id: versions
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # Get raw current version string from file
           CURRENT_VERSION_RAW=$(grep -oP 'version\s*=\s*"\K[^"]+' seanime-pkg.nix || echo "0.0.0")
+          # Clean potential leading 'v' from current version for comparison/messaging
           CURRENT_VERSION_CLEAN="${CURRENT_VERSION_RAW#v}"
           echo "Current version found in seanime-pkg.nix (raw): $CURRENT_VERSION_RAW"
           echo "Current version (cleaned): $CURRENT_VERSION_CLEAN"
@@ -62,6 +63,7 @@ jobs:
              exit 1
           fi
 
+          # Filter to find the first non-prerelease and non-draft release tag name
           LATEST_TAG=$(echo "$RELEASES" | jq -r '[.[] | select(.prerelease == false and .draft == false)][0].tag_name')
 
           if [ -z "$LATEST_TAG" ] || [ "$LATEST_TAG" == "null" ]; then
@@ -98,7 +100,6 @@ jobs:
           BRANCH_NAME: "update-seanime-${{ env.LATEST_VERSION_CLEAN }}"
         run: |
           echo "Checking for existing open PR for branch: $BRANCH_NAME"
-          # Use gh pr list to find open PRs targeting the default branch from the head branch
           EXISTING_PR_URL=$(gh pr list --head "$BRANCH_NAME" --base main --state open --json url --jq '.[0].url')
 
           if [ -n "$EXISTING_PR_URL" ]; then
@@ -110,8 +111,8 @@ jobs:
             echo "PR_EXISTS=false" >> $GITHUB_ENV
           fi
 
-      # --- MODIFIED STEP: Uses nix-prefetch-url ---
-      - name: Update version and hash (using pre-built binary URL)
+      # --- MODIFIED STEP: Uses nix-prefetch-url --type sha256 ---
+      - name: Update version and hash (using pre-built binary SRI hash)
         # Only run if update is needed AND no existing PR was found
         if: env.UPDATE_NEEDED == 'true' && env.PR_EXISTS == 'false'
         env:
@@ -121,7 +122,7 @@ jobs:
            # Define target architecture (ADJUST IF NEEDED)
            TARGET_ARCH: "Linux_x86_64"
         run: |
-          echo "Updating seanime-pkg.nix to version $LATEST_VERSION_CLEAN (using pre-built binary)"
+          echo "Updating seanime-pkg.nix to version $LATEST_VERSION_CLEAN (using pre-built binary SRI hash)"
 
           # Update version string using the cleaned version
           sed -i -E "s@(version\s*=\s*\")[^\"]+@\1${LATEST_VERSION_CLEAN}@" seanime-pkg.nix
@@ -132,9 +133,9 @@ jobs:
           BINARY_URL="https://github.com/5rahim/seanime/releases/download/${LATEST_TAG}/${ASSET_FILENAME}"
           echo "Target binary URL: $BINARY_URL"
 
-          # Use nix-prefetch-url to get the hash of the binary
-          echo "Running: nix-prefetch-url $BINARY_URL"
-          PREFETCH_OUTPUT=$(nix-prefetch-url "$BINARY_URL" 2>&1)
+          # --- Use nix-prefetch-url with --type sha256 to get SRI hash ---
+          echo "Running: nix-prefetch-url --type sha256 $BINARY_URL"
+          PREFETCH_OUTPUT=$(nix-prefetch-url --type sha256 "$BINARY_URL" 2>&1)
           EXIT_CODE=$?
 
           if [ $EXIT_CODE -ne 0 ]; then
@@ -143,38 +144,40 @@ jobs:
             exit 1
           fi
 
-          # Assume the hash is the last line of successful output
+          # Assume the SRI hash is the last line of successful output
           NEW_HASH=$(echo "$PREFETCH_OUTPUT" | tail -n 1)
           echo "Prefetch output (raw):"
           echo "$PREFETCH_OUTPUT"
-          echo "Extracted hash: $NEW_HASH"
+          echo "Extracted SRI hash: $NEW_HASH"
 
-          # Basic Hash Validation
-          if [ -z "$NEW_HASH" ]; then
-              echo "::error::Failed to extract hash from nix-prefetch-url output."
+          # --- Hash Validation (expecting SRI format) ---
+          if [[ "$NEW_HASH" =~ ^sha256-[A-Za-z0-9+/]+={0,2}$ ]]; then
+              echo "Validated hash format (SRI): $NEW_HASH"
+          else
+              echo "::error::Extracted value '$NEW_HASH' does not look like a valid SRI sha256 hash."
+              # Optionally print output again for debugging
+              # echo "Output was: $PREFETCH_OUTPUT"
               exit 1
           fi
-          # Add more specific checks if needed based on nix-prefetch-url output format
-          echo "Proceeding with extracted hash: $NEW_HASH"
 
-          # Update hash in seanime-pkg.nix
+          # --- Update hash in seanime-pkg.nix ---
+          # The sed command works correctly as it replaces the content between quotes
           echo "Updating hash in seanime-pkg.nix to $NEW_HASH"
           sed -i -E "s|(hash\s*=\s*\")[^\"]+(\";)|\1${NEW_HASH}\2|" seanime-pkg.nix
 
-          # Verification
-          # Adjust grep pattern if hash doesn't include quotes or ; in your file
+          # --- Verification ---
           if grep -qF "hash = \"$NEW_HASH\";" seanime-pkg.nix; then
-            echo "Successfully updated hash in seanime-pkg.nix"
+            echo "Successfully updated hash in seanime-pkg.nix with SRI format"
           else
-            echo "::error::Failed to verify hash update in seanime-pkg.nix using sed."
+            echo "::error::Failed to verify SRI hash update in seanime-pkg.nix using sed."
             echo "Expected hash: $NEW_HASH"
             echo "File content after attempted update:"
             cat seanime-pkg.nix
             exit 1
           fi
 
-          # IMPORTANT REMINDER FOR USER:
-          echo "::warning::CRITICAL: Remember to manually update seanime-pkg.nix to use 'fetchurl' with the URL '$BINARY_URL' and the correct hash type (e.g., sha256 or hash = \"sha256-...\") instead of 'fetchFromGitHub' for this change to be effective!"
+          # Reminder that seanime-pkg.nix must use fetchurl
+          echo "::warning::CRITICAL: Ensure seanime-pkg.nix uses 'fetchurl' for this hash to be effective!"
 
       - name: Commit and push changes
         # Only run if update is needed AND no existing PR was found
@@ -200,7 +203,7 @@ jobs:
           else
              echo "Committing changes..."
              # Use CLEAN version in commit message
-             git commit -m "feat: Update seanime to ${LATEST_VERSION_CLEAN} (pre-built)" -m "Automatic update via GitHub Actions using pre-built binary hash."
+             git commit -m "feat: Update seanime to ${LATEST_VERSION_CLEAN} (pre-built SRI)" -m "Automatic update via GitHub Actions using pre-built binary SRI hash."
 
              echo "Pushing changes to origin/$BRANCH_NAME..."
              git push -f origin "$BRANCH_NAME"
@@ -230,10 +233,8 @@ jobs:
 
             const baseBranch = 'main'; // <<< IMPORTANT: Change this if your default branch is not 'main' >>>
             // Use CLEAN version in title and body
-            const title = `feat: Update seanime to ${LATEST_VERSION_CLEAN} (pre-built)`;
-            const body = `This PR automatically updates the \`seanime\` package from version \`${CURRENT_VERSION_CLEAN}\` to \`${LATEST_VERSION_CLEAN}\` using the hash of the pre-built binary.
-
-            **IMPORTANT:** This requires the \`seanime-pkg.nix\` file to use \`Workspaceurl\` instead of \`WorkspaceFromGitHub\`. Please ensure this change is made manually if it hasn't been already.
+            const title = `feat: Update seanime to ${LATEST_VERSION_CLEAN} (pre-built SRI)`;
+            const body = `This PR automatically updates the \`seanime\` package from version \`${CURRENT_VERSION_CLEAN}\` to \`${LATEST_VERSION_CLEAN}\` using the SRI hash (\`sha256-...\`) of the pre-built binary.
 
             Changes generated by GitHub Actions workflow.`;
             const owner = context.repo.owner;
@@ -249,7 +250,7 @@ jobs:
                 owner,
                 repo,
                 state: 'open',
-                head: `${owner}:${BRANCH_NAME}`, // Branch name derived from CLEAN version
+                head: `${owner}:${BRANCH_NAME}`,
                 base: baseBranch,
               });
 
@@ -262,7 +263,7 @@ jobs:
                   owner,
                   repo,
                   title,
-                  head: BRANCH_NAME, // Branch name derived from CLEAN version
+                  head: BRANCH_NAME,
                   base: baseBranch,
                   body: body,
                 });
