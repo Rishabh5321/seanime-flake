@@ -32,7 +32,7 @@ jobs:
         run: |
           # Install necessary tools using nix profile for better isolation
           # Added nix-prefetch-url tool
-          nix profile install nixpkgs#gh nixpkgs# nixpkgs#jq nixpkgs#gnused nixpkgs#gnugrep
+          nix profile install nixpkgs#gh nixpkgs#jq nixpkgs#gnused nixpkgs#gnugrep
 
           # Add Nix binaries to PATH for subsequent steps
           echo "$HOME/.nix-profile/bin" >> $GITHUB_PATH
