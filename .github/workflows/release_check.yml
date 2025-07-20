@@ -22,6 +22,13 @@ jobs:
           # Fetch all history for accurate version comparison and branch operations
           fetch-depth: 0
 
+      - name: Generate App Token
+        id: generate_token
+        uses: peter-murray/workflow-application-token-action@v4
+        with:
+          application_id: ${{ secrets.APP_ID }}
+          application_private_key: ${{ secrets.APP_PRIVATE_KEY }}
+
       - name: Install Nix
         uses: cachix/install-nix-action@v31
         with:
@@ -46,7 +53,7 @@ jobs:
       - name: Get current and latest versions
         id: versions
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ steps.generate_token.outputs.token }}
         run: |
           CURRENT_VERSION=$(grep -oP 'version\s*=\s*"\K[^"]+' seanime-pkg.nix || echo "0.0.0")
           echo "Current version found in seanime-pkg.nix: $CURRENT_VERSION"
@@ -85,8 +92,8 @@ jobs:
         # Only run if an update is potentially needed
         if: env.UPDATE_NEEDED == 'true'
         env:
-          # GITHUB_TOKEN needed for gh cli to interact with the repo
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Use app token for gh cli to interact with the repo
+          GITHUB_TOKEN: ${{ steps.generate_token.outputs.token }}
           # Define branch name early using the determined LATEST_VERSION
           BRANCH_NAME: "update-seanime-${{ env.LATEST_VERSION }}"
         run: |
@@ -148,108 +155,51 @@ jobs:
           # Update the hash in the file
           sed -i -E "s|(hash\s*=\s*\")[^\"]+(\";)|\1sha256-${NEW_HASH}\2|" seanime-pkg.nix
 
-      - name: Commit and push changes
+      - name: Configure Git for FlakeBuilderApp
         # Only run if update is needed AND no existing PR was found
         if: env.UPDATE_NEEDED == 'true' && env.PR_EXISTS == 'false'
-        env:
-          # Pass LATEST_VERSION and define branch name again for clarity
-          LATEST_VERSION: ${{ env.LATEST_VERSION }}
-          BRANCH_NAME: "update-seanime-${{ env.LATEST_VERSION }}"
         run: |
-          echo "Configuring Git user..."
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global user.email "flakebuilderapp[bot]@users.noreply.github.com"
+          git config --global user.name "flakebuilderapp[bot]"
+          echo "Git user configured: $(git config --global user.name) <$(git config --global user.email)>"
 
-          echo "Checking out branch $BRANCH_NAME..."
-          # Create or switch to the update branch
-          git checkout -B "$BRANCH_NAME"
-
-          echo "Adding changes..."
+      - name: Check for changes
+        id: git_status
+        # Only run if update is needed AND no existing PR was found
+        if: env.UPDATE_NEEDED == 'true' && env.PR_EXISTS == 'false'
+        run: |
           git add seanime-pkg.nix
-
-          # Check if there are actual changes staged for commit
           if git diff --staged --quiet; then
-             echo "No changes detected in seanime-pkg.nix after update. Skipping commit and push."
-             # Set an output or env var if subsequent steps depend on changes being pushed
-             echo "CHANGES_PUSHED=false" >> $GITHUB_ENV
+            echo "No changes detected in seanime-pkg.nix after update."
+            echo "CHANGES_EXIST=false" >> $GITHUB_OUTPUT
           else
-             echo "Committing changes..."
-             git commit -m "feat: Update seanime to ${LATEST_VERSION}" -m "Automatic update via GitHub Actions."
-
-             echo "Pushing changes to origin/$BRANCH_NAME..."
-             # Force push is generally acceptable here since we manage this branch
-             # and checked for existing PRs. It ensures the branch reflects this specific run.
-             git push -f origin "$BRANCH_NAME"
-             echo "Changes pushed successfully."
-             echo "CHANGES_PUSHED=true" >> $GITHUB_ENV
+            echo "Changes detected in seanime-pkg.nix."
+            echo "CHANGES_EXIST=true" >> $GITHUB_OUTPUT
           fi
 
       - name: Create Pull Request
-        # Only run if update is needed, no existing PR was found, AND changes were pushed
-        if: env.UPDATE_NEEDED == 'true' && env.PR_EXISTS == 'false' && env.CHANGES_PUSHED == 'true'
-        uses: actions/github-script@v7
-        env:
-          # Pass necessary versions and branch name to the script context
-          CURRENT_VERSION: ${{ env.CURRENT_VERSION }}
-          LATEST_VERSION: ${{ env.LATEST_VERSION }}
-          BRANCH_NAME: "update-seanime-${{ env.LATEST_VERSION }}"
+        id: create_pr
+        if: env.UPDATE_NEEDED == 'true' && env.PR_EXISTS == 'false' && steps.git_status.outputs.CHANGES_EXIST == 'true'
+        uses: peter-evans/create-pull-request@v7
         with:
-          # Grant the script permission to create PRs
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const { CURRENT_VERSION, LATEST_VERSION, BRANCH_NAME } = process.env;
-            // Ensure variables are available
-            if (!LATEST_VERSION || !BRANCH_NAME || !CURRENT_VERSION) {
-              core.setFailed('Required environment variables (CURRENT_VERSION, LATEST_VERSION, BRANCH_NAME) were not set for PR creation.');
-              return;
-            }
+          token: ${{ steps.generate_token.outputs.token }}
+          author: "flakebuilderapp[bot] <flakebuilderapp[bot]@users.noreply.github.com>"
+          committer: "flakebuilderapp[bot] <flakebuilderapp[bot]@users.noreply.github.com>"
+          labels: automated, seanime-update
+          delete-branch: true
+          commit-message: "feat: Update seanime to ${{ env.LATEST_VERSION }}"
+          title: "feat: Update seanime to ${{ env.LATEST_VERSION }}"
+          body: |
+            This PR automatically updates the `seanime` package from version `${{ env.CURRENT_VERSION }}` to `${{ env.LATEST_VERSION }}`.
 
-            const baseBranch = 'main'; // <<< IMPORTANT: Change this if your default branch is not 'main' >>>
-            const title = `feat: Update seanime to ${LATEST_VERSION}`;
-            const body = `This PR automatically updates the \`seanime\` package from version \`${CURRENT_VERSION}\` to \`${LATEST_VERSION}\`.
+            Changes generated by GitHub Actions workflow.
+          branch: "update-seanime-${{ env.LATEST_VERSION }}"
+          base: main
 
-            Changes generated by GitHub Actions workflow.`;
-            const owner = context.repo.owner;
-            const repo = context.repo.repo;
-
-            console.log(`Attempting to create Pull Request:`);
-            console.log(`  Title: ${title}`);
-            console.log(`  Head: ${owner}:${BRANCH_NAME}`);
-            console.log(`  Base: ${baseBranch}`);
-
-            try {
-              // The check_pr step should prevent this from running if a PR exists,
-              // but this check adds robustness.
-              const { data: existingPulls } = await github.rest.pulls.list({
-                owner,
-                repo,
-                state: 'open',
-                head: `${owner}:${BRANCH_NAME}`,
-                base: baseBranch,
-              });
-
-              if (existingPulls.length > 0) {
-                console.log(`::warning::Pull request from ${BRANCH_NAME} to ${baseBranch} already exists: ${existingPulls[0].html_url}`);
-                console.log('Skipping new PR creation.');
-              } else {
-                console.log('No existing open PR found. Creating a new one...');
-                const { data: pullRequest } = await github.rest.pulls.create({
-                  owner,
-                  repo,
-                  title,
-                  head: BRANCH_NAME,
-                  base: baseBranch,
-                  body: body,
-                });
-                console.log(`Pull request created successfully: ${pullRequest.html_url}`);
-                // Optionally add labels or assignees here
-                // await github.rest.issues.addLabels({ owner, repo, issue_number: pullRequest.number, labels: ['dependencies', 'automated'] });
-              }
-            } catch (error) {
-               // Check if error is because the branch wasn't pushed (e.g., no changes)
-               if (error.message.includes("No commit found for the ref") || error.message.includes("422")) {
-                  console.warn(`Could not create PR. This might be because the branch '${BRANCH_NAME}' wasn't pushed (no changes detected?) or another issue occurred. Error: ${error.message}`);
-               } else {
-                  core.setFailed(`Failed to create or check for pull request for branch ${BRANCH_NAME}: ${error.message}`);
-               }
-            }
+      - name: Set the PR to automerge
+        if: env.UPDATE_NEEDED == 'true' && env.PR_EXISTS == 'false' && steps.create_pr.outputs.pull-request-operation == 'created'
+        uses: peter-evans/enable-pull-request-automerge@v3
+        with:
+          token: ${{ steps.generate_token.outputs.token }}
+          pull-request-number: ${{ steps.create_pr.outputs.pull-request-number }}
+          merge-method: "squash"
