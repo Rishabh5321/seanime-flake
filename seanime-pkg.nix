@@ -3,11 +3,11 @@
 
 pkgs.stdenv.mkDerivation rec {
   pname = "seanime";
-  version = "2.9.1";
+  version = "2.9.3";
 
   src = pkgs.fetchurl {
     url = "https://github.com/5rahim/seanime/releases/download/v${version}/seanime-${version}_Linux_x86_64.tar.gz";
-    hash = "sha256-rNacc8rixbNJ4dHF7JN/lYQ/1vgo0lA/3TX3szJ/syw=";
+    hash = "sha256-R245eCZ0KNFGFm2VdiAPtTrumehJIAsemlw3uEij3kU=";
   };
 
   phases = [ "installPhase" ];
