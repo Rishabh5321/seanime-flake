@@ -3,11 +3,11 @@
 
 pkgs.stdenv.mkDerivation rec {
   pname = "seanime";
-  version = "3.4.0";
+  version = "3.4.1";
 
   src = pkgs.fetchurl {
     url = "https://github.com/5rahim/seanime/releases/download/v${version}/seanime-${version}_Linux_x86_64.tar.gz";
-    hash = "sha256-QtXR5/J3GOSIAK+KDxsSPVG7FKeMPd/s8+Xz97BZXoc=";
+    hash = "sha256-SiPujK6ZrjnV+9NWFz5VwNCuYmfZGyNDM5ZbPCCTM6o=";
   };
 
   phases = [ "installPhase" ];
