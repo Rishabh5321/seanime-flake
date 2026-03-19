@@ -1,5 +1,8 @@
 # Seanime Flake
 
+> [!WARNING]
+> This repository is being **archived**. Please move to [custom-packages-flake](https://github.com/Rishabh5321/custom-packages-flake) for future updates.
+
 [![NixOS](https://img.shields.io/badge/NixOS-supported-blue.svg)](https://nixos.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![flake_check](https://github.com/Rishabh5321/seanime-flake/actions/workflows/flake_check.yml/badge.svg)](https://github.com/Rishabh5321/seanime-flake/actions/workflows/flake_check.yml)

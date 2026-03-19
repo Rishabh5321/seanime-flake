@@ -18,7 +18,7 @@ pkgs.stdenv.mkDerivation rec {
   '';
 
   meta = {
-    description = "Open-source media server with a web interface and desktop app for anime and manga";
+    description = "ARCHIVED: Please move to https://github.com/Rishabh5321/custom-packages-flake - Seanime media server";
     homepage = "https://github.com/5rahim/seanime";
     license = pkgs.lib.licenses.gpl3Only;
   };
