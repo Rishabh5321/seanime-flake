@@ -17,7 +17,7 @@
         default = self.packages.x86_64-linux.seanime;
       };
 
-      nixosModules.seanime = { pkgs, ... }: {
+      nixosModules.seanime = { ... }: {
         imports = [
           ({ ... }: {
             imports = [ ./seanime-home.nix ];
